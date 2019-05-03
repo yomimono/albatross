@@ -1,6 +1,9 @@
 (* (c) 2017, 2018 Hannes Mehnert, all rights reserved *)
 
 open Rresult.R.Infix
+open X509
+
+open Albatross_provision
 
 let l_exts =
   [ (true, `Key_usage [ `Digital_signature ; `Key_encipherment ])
@@ -19,7 +22,7 @@ let s_exts =
 let albatross_extension csr =
   let req_exts =
     match
-      List.find (function `Extensions _ -> true | _ -> false) X509.CA.((info csr).extensions)
+      List.find (function `Extensions _ -> true | _ -> false) CA.((info csr).extensions)
     with
     | exception Not_found -> []
     | `Extensions x -> x
@@ -35,10 +38,10 @@ let albatross_extension csr =
   | _ -> Error (`Msg "couldn't find albatross extension in CSR")
 
 let sign_csr dbname cacert key csr days =
-  let ri = X509.CA.info csr in
-  Logs.app (fun m -> m "signing certificate with subject %s"
-               (X509.distinguished_name_to_string ri.X509.CA.subject)) ;
-  let issuer = X509.subject cacert in
+  let ri = CA.info csr in
+  Logs.app (fun m -> m "signing certificate with subject %a"
+               Distinguished_name.pp ri.CA.subject);
+  let issuer = Certificate.subject cacert in
   (* TODO: check delegation! verify whitelisted commands!? *)
   match albatross_extension csr with
   | Ok (ext, v) ->
@@ -53,17 +56,20 @@ let sign_csr dbname cacert key csr days =
     in
     Logs.app (fun m -> m "signing %a" Vmm_commands.pp cmd) ;
     Ok (ext :: exts) >>= fun extensions ->
-    Albatross_provision.sign ~dbname extensions issuer key csr (Duration.of_day days)
+    sign ~dbname extensions issuer key csr (Duration.of_day days)
   | Error e -> Error e
 
-let sign _ db cacert cakey csrname days =
+let sign_main _ db cacert cakey csrname days =
   Nocrypto_entropy_unix.initialize () ;
   Bos.OS.File.read (Fpath.v cacert) >>= fun cacert ->
-  let cacert = X509.Encoding.Pem.Certificate.of_pem_cstruct1 (Cstruct.of_string cacert) in
+  Rresult.R.reword_error (function `Parse e -> `Msg e)
+    (Certificate.decode_pem (Cstruct.of_string cacert)) >>= fun cacert ->
   Bos.OS.File.read (Fpath.v cakey) >>= fun pk ->
-  let cakey = X509.Encoding.Pem.Private_key.of_pem_cstruct1 (Cstruct.of_string pk) in
+  Rresult.R.reword_error (function `Parse e -> `Msg e)
+    (Private_key.decode_pem (Cstruct.of_string pk)) >>= fun cakey ->
   Bos.OS.File.read (Fpath.v csrname) >>= fun enc ->
-  let csr = X509.Encoding.Pem.Certificate_signing_request.of_pem_cstruct1 (Cstruct.of_string enc) in
+  Rresult.R.reword_error (function `Parse e -> `Msg e)
+    (CA.decode_pem (Cstruct.of_string enc)) >>= fun csr ->
   sign_csr (Fpath.v db) cacert cakey csr days
 
 let help _ man_format cmds = function
@@ -73,14 +79,14 @@ let help _ man_format cmds = function
 
 let generate _ name db days sname sdays =
   Nocrypto_entropy_unix.initialize () ;
-  Albatross_provision.priv_key ~bits:4096 None name >>= fun key ->
+  priv_key ~bits:4096 None name >>= fun key ->
   let name = [ `CN name ] in
-  let csr = X509.CA.request name key in
-  Albatross_provision.sign ~certname:"cacert" (d_exts ()) name key csr (Duration.of_day days) >>= fun () ->
-  Albatross_provision.priv_key None sname >>= fun skey ->
+  let csr = CA.request name key in
+  sign ~certname:"cacert" (d_exts ()) name key csr (Duration.of_day days) >>= fun () ->
+  priv_key None sname >>= fun skey ->
   let sname = [ `CN sname ] in
-  let csr = X509.CA.request sname skey in
-  Albatross_provision.sign ~dbname:(Fpath.v db) s_exts name key csr (Duration.of_day sdays)
+  let csr = CA.request sname skey in
+  sign ~dbname:(Fpath.v db) s_exts name key csr (Duration.of_day sdays)
 
 open Cmdliner
 open Albatross_cli
@@ -115,7 +121,7 @@ let generate_cmd =
     [`S "DESCRIPTION";
      `P "Generates a certificate authority."]
   in
-  Term.(term_result (const generate $ setup_log $ Albatross_provision.nam $ db $ days $ sname $ sday)),
+  Term.(term_result (const generate $ setup_log $ nam $ db $ days $ sname $ sday)),
   Term.info "generate" ~doc ~man
 
 let days =
@@ -132,7 +138,7 @@ let sign_cmd =
     [`S "DESCRIPTION";
      `P "Signs the certificate signing request."]
   in
-  Term.(term_result (const sign $ setup_log $ db $ cacert $ key $ csr $ days)),
+  Term.(term_result (const sign_main $ setup_log $ db $ cacert $ key $ csr $ days)),
   Term.info "sign" ~doc ~man
 
 let help_cmd =

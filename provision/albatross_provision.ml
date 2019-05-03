@@ -30,8 +30,8 @@ let append name data =
   safe Unix.close fd
 
 let key_ids pub issuer =
-  let auth = (Some (X509.key_id issuer), [], None) in
-  [ (false, `Subject_key_id (X509.key_id pub)) ; (false, `Authority_key_id auth) ]
+  let auth = (Some (X509.Public_key.id issuer), [], None) in
+  [ (false, `Subject_key_id (X509.Public_key.id pub)) ; (false, `Authority_key_id auth) ]
 
 let sign ?dbname ?certname extensions issuer key csr delta =
   let open Rresult.R.Infix in
@@ -56,8 +56,8 @@ let sign ?dbname ?certname extensions issuer key csr delta =
   (match dbname with
    | None -> Ok () (* no DB! *)
    | Some dbname ->
-     append dbname (Printf.sprintf "%s %s\n" (Z.to_string (X509.serial cert)) certname)) >>= fun () ->
-  let enc = X509.Encoding.Pem.Certificate.to_pem_cstruct1 cert in
+     append dbname (Printf.sprintf "%s %s\n" (Z.to_string (X509.Certificate.serial cert)) certname)) >>= fun () ->
+  let enc = X509.Certificate.encode_pem cert in
   Bos.OS.File.write Fpath.(v certname + "pem") (Cstruct.to_string enc)
 
 let priv_key ?(bits = 2048) fn name =
@@ -70,11 +70,12 @@ let priv_key ?(bits = 2048) fn name =
   | false ->
     Logs.info (fun m -> m "creating new RSA key %a" Fpath.pp file) ;
     let priv = `RSA (Nocrypto.Rsa.generate bits) in
-    Bos.OS.File.write ~mode:0o400 file (Cstruct.to_string (X509.Encoding.Pem.Private_key.to_pem_cstruct1 priv)) >>= fun () ->
+    Bos.OS.File.write ~mode:0o400 file (Cstruct.to_string (X509.Private_key.encode_pem priv)) >>= fun () ->
     Ok priv
   | true ->
     Bos.OS.File.read file >>= fun s ->
-    Ok (X509.Encoding.Pem.Private_key.of_pem_cstruct1 (Cstruct.of_string s))
+    Rresult.R.reword_error (function `Parse e -> `Msg e)
+      (X509.Private_key.decode_pem (Cstruct.of_string s))
 
 open Cmdliner
 

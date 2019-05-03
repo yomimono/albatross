@@ -2,13 +2,19 @@
 
 open Rresult
 open Rresult.R.Infix
+open X509
 
 (* we skip all non-albatross certificates *)
 let cert_name cert =
-  match X509.Extension.unsupported cert Vmm_asn.oid with
+  match Certificate.unsupported cert Vmm_asn.oid with
   | None -> Ok None
   | Some (_, data) ->
-    let name = X509.common_name_to_string cert in
+    let name =
+      let subject = Certificate.subject cert in
+      match List.find_opt (function `CN _ -> true | _ -> false) subject with
+      | Some (`CN name) -> name
+      | _ -> ""
+    in
     if name = "" then
       match Vmm_asn.cert_extension_of_cstruct data with
       | Error (`Msg _) -> Error (`Msg "couldn't parse albatross extension")
@@ -49,7 +55,7 @@ let separate_chain = function
   | leaf :: xs -> Ok (leaf, List.rev xs)
 
 let wire_command_of_cert version cert =
-  match X509.Extension.unsupported cert Vmm_asn.oid with
+  match Certificate.unsupported cert Vmm_asn.oid with
   | None -> Error `Not_present
   | Some (_, data) ->
     match Vmm_asn.cert_extension_of_cstruct data with
@@ -82,10 +88,9 @@ let extract_policies version chain =
 let handle version chain =
   separate_chain chain >>= fun (leaf, rest) ->
   name chain >>= fun name ->
-  Logs.debug (fun m -> m "leaf is %s, chain %a"
-                 (X509.common_name_to_string leaf)
-                 Fmt.(list ~sep:(unit " -> ") string)
-                 (List.map X509.common_name_to_string rest)) ;
+  Logs.debug (fun m -> m "leaf is %a, chain %a"
+                 Certificate.pp leaf
+                 Fmt.(list ~sep:(unit " -> ") Certificate.pp) rest);
   extract_policies version rest >>= fun (_, policies) ->
   (* TODO: logging let login_hdr, login_ev = Log.hdr name, `Login addr in *)
   match wire_command_of_cert version leaf with

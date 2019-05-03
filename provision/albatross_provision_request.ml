@@ -18,7 +18,7 @@ let jump id cmd =
   let name = Vmm_core.Name.to_string id in
   priv_key None name >>= fun priv ->
   let csr = csr priv name cmd in
-  let enc = X509.Encoding.Pem.Certificate_signing_request.to_pem_cstruct1 csr in
+  let enc = X509.CA.encode_pem csr in
   Bos.OS.File.write Fpath.(v name + ".req") (Cstruct.to_string enc)
 
 let info_policy _ name =
