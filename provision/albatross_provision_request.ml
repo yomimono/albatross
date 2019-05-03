@@ -8,7 +8,9 @@ open Rresult.R.Infix
 let version = `AV3
 
 let csr priv name cmd =
-  let exts = [ (false, `Unsupported (oid, cert_extension_to_cstruct (version, cmd))) ]
+  let exts =
+    let data = cert_extension_to_cstruct (version, cmd) in
+    X509.Extension.singleton albatross_key (false, data)
   and name = [ `CN name ]
   in
   X509.CA.request name ~extensions:[`Extensions exts] priv

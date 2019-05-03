@@ -17,9 +17,10 @@ let read fd =
   in
   loop ()
 
-let key_ids pub issuer =
+let key_ids exts pub issuer =
   let auth = (Some (Public_key.id issuer), [], None) in
-  [ (false, `Subject_key_id (Public_key.id pub)) ; (false, `Authority_key_id auth) ]
+  Extension.(add Subject_key_id (false, Public_key.id pub)
+               (add Authority_key_id (false, auth) exts))
 
 let timestamps validity =
   let now = Ptime_clock.now () in
@@ -42,10 +43,11 @@ let handle (host, port) cert key ca id (cmd : Vmm_commands.t) =
     let tmpkey = Nocrypto.Rsa.generate 4096 in
     let name = Vmm_core.Name.to_string id in
     let extensions =
-    [ (true, `Key_usage [ `Digital_signature ; `Key_encipherment ])
-    ; (true, `Basic_constraints (false, None))
-    ; (true, `Ext_key_usage [`Client_auth]) ;
-      (false, `Unsupported (Vmm_asn.oid, Vmm_asn.cert_extension_to_cstruct (version, cmd))) ]
+      Extension.(add Key_usage (true, [ `Digital_signature ; `Key_encipherment ])
+                   (add Basic_constraints (true, (false, None))
+                      (add Ext_key_usage (true, [`Client_auth])
+                         (singleton Vmm_tls.albatross_key
+                            (false, Vmm_asn.cert_extension_to_cstruct (version, cmd))))))
     in
     let csr =
       let name = [ `CN name ] in
@@ -55,7 +57,7 @@ let handle (host, port) cert key ca id (cmd : Vmm_commands.t) =
       let valid_from, valid_until = timestamps 300 in
       let extensions =
         let capub = match key with `RSA key -> Nocrypto.Rsa.pub_of_priv key in
-        extensions @ key_ids (CA.info csr).CA.public_key (`RSA capub)
+        key_ids extensions (CA.info csr).CA.public_key (`RSA capub)
       in
       let issuer = Certificate.subject cert in
       CA.sign csr ~valid_from ~valid_until ~extensions key issuer

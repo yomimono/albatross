@@ -2,6 +2,8 @@
 
 let asn_version = `AV2
 
+let albatross_key = X509.Extension.Unsupported Vmm_asn.oid
+
 let timestamps validity =
   let now = Ptime_clock.now () in
   match Ptime.add_span now (Ptime.Span.of_int_s (Duration.to_sec validity)) with
@@ -29,9 +31,12 @@ let append name data =
   go 0 >>= fun () ->
   safe Unix.close fd
 
-let key_ids pub issuer =
-  let auth = (Some (X509.Public_key.id issuer), [], None) in
-  [ (false, `Subject_key_id (X509.Public_key.id pub)) ; (false, `Authority_key_id auth) ]
+let key_ids exts pub issuer =
+  let open X509 in
+  let open X509.Extension in
+  let auth = (Some (Public_key.id issuer), [], None) in
+  add Subject_key_id (false, Public_key.id pub)
+    (add Authority_key_id (false, auth) exts)
 
 let sign ?dbname ?certname extensions issuer key csr delta =
   let open Rresult.R.Infix in
@@ -50,7 +55,7 @@ let sign ?dbname ?certname extensions issuer key csr delta =
       match key with
       | `RSA priv ->
         let capub = `RSA (Nocrypto.Rsa.pub_of_priv priv) in
-        extensions @ key_ids (X509.CA.info csr).X509.CA.public_key capub
+        key_ids extensions (X509.CA.info csr).X509.CA.public_key capub
   in
   let cert = X509.CA.sign csr ~valid_from ~valid_until ~extensions key issuer in
   (match dbname with

@@ -8,3 +8,5 @@ val handle :
   X509.Certificate.t list ->
   (Vmm_core.Name.t * (Vmm_core.Name.t * Vmm_core.Policy.t) list * Vmm_commands.t,
    [> `Msg of string ]) Result.result
+
+val albatross_key : (bool * Cstruct.t) X509.Extension.k

@@ -6,36 +6,34 @@ open X509
 open Albatross_provision
 
 let l_exts =
-  [ (true, `Key_usage [ `Digital_signature ; `Key_encipherment ])
-  ; (true, `Basic_constraints (false, None))
-  ; (true, `Ext_key_usage [`Client_auth]) ]
+  let open Extension in
+  add Key_usage (true, [ `Digital_signature ; `Key_encipherment ])
+    (add Basic_constraints (true, (false, None))
+       (singleton Ext_key_usage (true, [`Client_auth])))
 
 let d_exts ?len () =
-  [ (true, (`Basic_constraints (true, len)))
-  ; (true, (`Key_usage [ `Key_cert_sign ; `CRL_sign ; `Digital_signature ; `Content_commitment ])) ]
+  let open Extension in
+  add Basic_constraints (true, (true, len))
+    (singleton Key_usage (true, [ `Key_cert_sign ; `CRL_sign ; `Digital_signature ; `Content_commitment ]))
 
 let s_exts =
-  [ (true, `Key_usage [ `Digital_signature ; `Key_encipherment ])
-  ; (true, `Basic_constraints (false, None))
-  ; (true, `Ext_key_usage [`Server_auth]) ]
+  let open Extension in
+  add Key_usage (true, [ `Digital_signature ; `Key_encipherment ])
+    (add Basic_constraints (true, (false, None))
+       (singleton Ext_key_usage (true, [`Server_auth])))
 
 let albatross_extension csr =
   let req_exts =
     match
       List.find (function `Extensions _ -> true | _ -> false) CA.((info csr).extensions)
     with
-    | exception Not_found -> []
+    | exception Not_found -> Extension.empty
     | `Extensions x -> x
-    | _ -> []
+    | _ -> Extension.empty
   in
-  match
-    List.filter (function
-        | (_, `Unsupported (oid, _)) when Asn.OID.equal oid Vmm_asn.oid -> true
-        | _ -> false)
-      req_exts
-  with
-  | [ (_, `Unsupported (_, v)) as ext ] -> Ok (ext, v)
-  | _ -> Error (`Msg "couldn't find albatross extension in CSR")
+  match Extension.(find albatross_key req_exts) with
+  | Some data -> Ok data
+  | None -> Error (`Msg "couldn't find albatross extension in CSR")
 
 let sign_csr dbname cacert key csr days =
   let ri = CA.info csr in
@@ -44,8 +42,8 @@ let sign_csr dbname cacert key csr days =
   let issuer = Certificate.subject cacert in
   (* TODO: check delegation! verify whitelisted commands!? *)
   match albatross_extension csr with
-  | Ok (ext, v) ->
-    Vmm_asn.cert_extension_of_cstruct v >>= fun (version, cmd) ->
+  | Ok (_, cs) ->
+    Vmm_asn.cert_extension_of_cstruct cs >>= fun (version, cmd) ->
     (if Vmm_commands.version_eq version version then
        Ok ()
      else
@@ -55,7 +53,7 @@ let sign_csr dbname cacert key csr days =
       | _ -> l_exts
     in
     Logs.app (fun m -> m "signing %a" Vmm_commands.pp cmd) ;
-    Ok (ext :: exts) >>= fun extensions ->
+    Ok (Extension.add albatross_key (false, cs) exts) >>= fun extensions ->
     sign ~dbname extensions issuer key csr (Duration.of_day days)
   | Error e -> Error e
 

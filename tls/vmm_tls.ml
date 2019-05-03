@@ -4,9 +4,12 @@ open Rresult
 open Rresult.R.Infix
 open X509
 
+let albatross_key = Extension.Unsupported Vmm_asn.oid
+
 (* we skip all non-albatross certificates *)
 let cert_name cert =
-  match Certificate.unsupported cert Vmm_asn.oid with
+  let ext = Certificate.extensions cert in
+  match Extension.(find albatross_key ext) with
   | None -> Ok None
   | Some (_, data) ->
     let name =
@@ -55,7 +58,7 @@ let separate_chain = function
   | leaf :: xs -> Ok (leaf, List.rev xs)
 
 let wire_command_of_cert version cert =
-  match Certificate.unsupported cert Vmm_asn.oid with
+  match Extension.find albatross_key (Certificate.extensions cert) with
   | None -> Error `Not_present
   | Some (_, data) ->
     match Vmm_asn.cert_extension_of_cstruct data with
